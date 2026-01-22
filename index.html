@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Merger: Sortable & Drag-Drop</title>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    </script>
+
+    <style>
+        :root {
+            --card-size: 150px;
+        }
+
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background-color: #f4f4f9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+
+        /* พื้นที่ Drag & Drop ไฟล์หลัก */
+        #drop-zone {
+            width: 80%;
+            max-width: 600px;
+            height: 120px;
+            border: 2px dashed #007bff;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #fff;
+            color: #007bff;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-bottom: 20px;
+        }
+        #drop-zone.dragover {
+            background-color: #e6f2ff;
+            border-color: #0056b3;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
+            background: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .zoom-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        input[type="range"] { cursor: pointer; }
+
+        #reset-btn {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        #reset-btn:hover { background-color: #c82333; }
+
+        /* Container รายการไฟล์ */
+        #file-list {
+            width: 90%;
+            max-width: 1000px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center; /* จัดกึ่งกลาง */
+            padding: 10px;
+            min-height: 100px; /* กันพื้นที่ยุบ */
+        }
+
+        /* การ์ดไฟล์ */
+        .file-card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            width: var(--card-size);
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: grab; /* ไอคอนมือจับ */
+        }
+        
+        /* Class เมื่อกำลังลากการ์ด */
+        .file-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.9);
+            border: 2px dashed #007bff;
+        }
+
+        .file-card canvas {
+            width: 100%;
+            height: auto;
+            border: 1px solid #eee;
+            margin-bottom: 5px;
+            pointer-events: none; /* ป้องกันการลากรูปข้างใน */
+        }
+        .file-name {
+            font-size: 0.85rem;
+            color: #555;
+            word-wrap: break-word;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .delete-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 25px;
+            height: 25px;
+            background-color: #ff4d4d;
+            color: white;
+            border: 2px solid white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        .delete-btn:hover {
+            background-color: #ff0000;
+            transform: scale(1.1);
+        }
+
+        #merge-btn {
+            margin-top: 30px;
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            color: white;
+            background-color: #28a745;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            display: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #merge-btn:hover { background-color: #218838; }
+        #merge-btn:disabled { background-color: #ccc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+    <h1>โปรแกรมรวมไฟล์ PDF</h1>
+    
+    <div class="toolbar">
+        <div class="zoom-control">
+            <label for="zoom-slider">ขนาดรูป:</label>
+            <input type="range" id="zoom-slider" min="100" max="300" value="150">
+        </div>
+        <button id="reset-btn" onclick="resetAll()">ล้างค่าทั้งหมด (Reset)</button>
+    </div>
+
+    <div id="drop-zone">
+        ลากไฟล์ PDF มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์
+    </div>
+    
+    <input type="file" id="file-input" multiple accept="application/pdf" style="display: none;">
+
+    <div id="file-list"></div>
+    <button id="merge-btn" onclick="mergePDFs()">รวมไฟล์ PDF และดาวน์โหลด</button>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileListContainer = document.getElementById('file-list');
+        const mergeBtn = document.getElementById('merge-btn');
+        const zoomSlider = document.getElementById('zoom-slider');
+        
+        // เก็บข้อมูลไฟล์ทั้งหมด (ใช้เป็น Database กลาง)
+        let filesMap = new Map(); // ใช้ Map เก็บ {id: fileObject}
+
+        // --- 1. Zoom Logic ---
+        zoomSlider.addEventListener('input', (e) => {
+            document.documentElement.style.setProperty('--card-size', e.target.value + 'px');
+        });
+
+        // --- 2. Main Drag & Drop Listeners (นำเข้าไฟล์) ---
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+        // --- 3. Sorting Drag & Drop Listeners (สลับตำแหน่ง) ---
+        // เมื่อมีการลากการ์ดภายใน List
+        fileListContainer.addEventListener('dragover', (e) => {
+            e.preventDefault(); // อนุญาตให้ drop ได้
+            const afterElement = getDragAfterElement(fileListContainer, e.clientX, e.clientY);
+            const draggable = document.querySelector('.dragging');
+            if (afterElement == null) {
+                fileListContainer.appendChild(draggable); // ต่อท้ายสุด
+            } else {
+                fileListContainer.insertBefore(draggable, afterElement); // แทรกก่อนหน้า
+            }
+        });
+
+        // ฟังก์ชันคำนวณตำแหน่งเมาส์ว่าอยู่ใกล้การ์ดใบไหน (เพื่อแทรก)
+        function getDragAfterElement(container, x, y) {
+            // ดึงการ์ดทั้งหมดที่ไม่ได้ถูกลากอยู่
+            const draggableElements = [...container.querySelectorAll('.file-card:not(.dragging)')];
+
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                // คำนวณระยะห่างแนวนอนและแนวตั้ง
+                // เนื่องจากเป็น Grid (Flex-wrap) เราจะดูตำแหน่งเมาส์เทียบกับจุดกึ่งกลางกล่อง
+                const offsetX = x - box.left - box.width / 2;
+                const offsetY = y - box.top - box.height / 2;
+                
+                // ใช้ระยะทางรวม (Hypotenuse) หรือดูแค่แนวนอน/แนวตั้งก็ได้
+                // ในที่นี้ใช้ตรรกะง่ายๆ คือถ้าเมาส์อยู่ "ก่อน" จุดกึ่งกลาง ของ element นั้นๆ
+                if (x < box.right && y < box.bottom && x > box.left && y > box.top) {
+                     // ถ้าเมาส์อยู่บน element นี้ ให้ return element นี้ (เพื่อ insertBefore)
+                     return child;
+                }
+                
+                // fallback logic: หาตัวที่ใกล้ที่สุดทางซ้าย
+                if (offsetX < 0 && offsetX > closest.offset) {
+                    return { offset: offsetX, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        // --- Handle Files ---
+        async function handleFiles(files) {
+            for (const file of files) {
+                if (file.type !== 'application/pdf') {
+                    alert('เฉพาะไฟล์ PDF เท่านั้น: ' + file.name);
+                    continue;
+                }
+
+                const fileId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                filesMap.set(fileId, file); // เก็บไฟล์ลง Map
+                await createThumbnail(file, fileId);
+            }
+            updateUI();
+        }
+
+        // --- Create Thumbnail ---
+        async function createThumbnail(file, id) {
+            const fileURL = URL.createObjectURL(file);
+            const loadingTask = pdfjsLib.getDocument(fileURL);
+            const pdf = await loadingTask.promise;
+            const page = await pdf.getPage(1);
+            
+            const scale = 0.5;
+            const viewport = page.getViewport({ scale: scale });
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = { canvasContext: context, viewport: viewport };
+            await page.render(renderContext).promise;
+
+            const card = document.createElement('div');
+            card.className = 'file-card';
+            card.id = id; // ใช้ ID ตรงๆ ที่ div เลย
+            card.draggable = true; // *** สำคัญ: เปิดให้ลากได้ ***
+
+            // --- Event สำหรับการลาก Card ---
+            card.addEventListener('dragstart', () => {
+                card.classList.add('dragging');
+            });
+            card.addEventListener('dragend', () => {
+                card.classList.remove('dragging');
+            });
+
+            const deleteBtn = document.createElement('div');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.onclick = () => removeFile(id);
+
+            const nameDiv = document.createElement('div');
+            nameDiv.className = 'file-name';
+            nameDiv.textContent = file.name;
+
+            card.appendChild(deleteBtn);
+            card.appendChild(canvas);
+            card.appendChild(nameDiv);
+            fileListContainer.appendChild(card);
+        }
+
+        // --- Remove File ---
+        function removeFile(id) {
+            filesMap.delete(id); // ลบจาก Map
+            const card = document.getElementById(id);
+            if (card) card.remove();
+            updateUI();
+        }
+
+        // --- Reset All ---
+        function resetAll() {
+            if (filesMap.size > 0 && !confirm("ล้างรายการทั้งหมด?")) return;
+            filesMap.clear();
+            fileListContainer.innerHTML = '';
+            fileInput.value = '';
+            updateUI();
+        }
+
+        function updateUI() {
+            mergeBtn.style.display = filesMap.size > 0 ? 'block' : 'none';
+        }
+
+        // --- Merge Logic (Updated for Sorting) ---
+        async function mergePDFs() {
+            // 1. อ่านลำดับการ์ดจากหน้าจอ (DOM) โดยตรง เพื่อให้ได้ลำดับที่ผู้ใช้จัดเรียง
+            const cardElements = document.querySelectorAll('.file-card');
+            if (cardElements.length === 0) return;
+
+            mergeBtn.textContent = "กำลังประมวลผล...";
+            mergeBtn.disabled = true;
+
+            try {
+                const { PDFDocument } = PDFLib;
+                const mergedPdf = await PDFDocument.create();
+                
+                // แก้ไข 1: เปลี่ยนชื่อนำหน้าเป็น "Merge"
+                let newFileNameParts = ["Merge"]; 
+
+                // 2. วนลูปตามลำดับ HTML Elements ที่เห็นบนจอ
+                for (const card of cardElements) {
+                    const id = card.id;
+                    const file = filesMap.get(id); // ดึงไฟล์จริงจาก Map ด้วย ID
+
+                    if (file) {
+                        const arrayBuffer = await file.arrayBuffer();
+                        const pdfDoc = await PDFDocument.load(arrayBuffer);
+                        const copiedPages = await mergedPdf.copyPages(pdfDoc, pdfDoc.getPageIndices());
+                        copiedPages.forEach((page) => mergedPdf.addPage(page));
+
+                        // เก็บชื่อไฟล์สำหรับตั้งชื่อใหม่
+                        newFileNameParts.push(file.name.replace(/\.[^/.]+$/, ""));
+                    }
+                }
+
+                const finalFileName = newFileNameParts.join("_") + ".pdf";
+                const pdfBytes = await mergedPdf.save();
+                download(pdfBytes, finalFileName, "application/pdf");
+
+            } catch (error) {
+                console.error(error);
+                alert("เกิดข้อผิดพลาดในการรวมไฟล์");
+            } finally {
+                mergeBtn.textContent = "รวมไฟล์ PDF และดาวน์โหลด";
+                mergeBtn.disabled = false;
+            }
+        }
+
+        function download(data, filename, type) {
+            const blob = new Blob([data], { type: type });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+    </script>
+</body>
+</html>
